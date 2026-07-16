@@ -1,0 +1,17 @@
+# entorno
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# datos (el CSV se descarga con descargar_datos.py)
+datos.csv
+datos.csv.gz
+datos_backup.csv
+
+# temporales de prueba
+prueba*.csv*
+test_carga.py
+
+# editor
+.vscode/
