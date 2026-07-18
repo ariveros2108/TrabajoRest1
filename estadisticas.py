@@ -1,22 +1,22 @@
 import os
 import math
+import uuid
 from datetime import date
 from concurrent.futures import ProcessPoolExecutor
+from typing import Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
 
-# configuración del CSV
 CSV_SEP = ";"
 CSV_PATH = os.getenv("CSV_PATH", "datos.csv")
 CHUNK_SIZE = 100_000
 
-# GENERO viene como número, el filtro llega como texto
 GENERO_TEXTO_A_NUM = {
-    "No especificado": 0,
-    "Masculino": 1,
-    "Femenino": 2,
-    "Otro": 3,
+    "NO ESPECIFICADO": 0,
+    "MASCULINO": 1,
+    "FEMENINO": 2,
+    "OTRO": 3,
 }
 
 CANALES_VALIDOS = {"POS", "WEB", "APP", "CCT", "APR", "WPR"}
@@ -26,19 +26,24 @@ COLUMNAS_USADAS = [
     "LOCAL", "CODIGO CLIENTE", "FECHA NACIMIENTO", "GENERO",
 ]
 
+COLUMNAS_REQUERIDAS = [
+    "MONTO APLICADO", "FECHA", "GENERO", "EDAD",
+    "CANAL", "SKU", "CODIGO CLIENTE", "LOCAL",
+]
 
-def _procesar_chunk(chunk):
+
+def preparar_datos(chunk):
     chunk["MONTO APLICADO"] = pd.to_numeric(chunk["MONTO APLICADO"], errors="coerce")
     chunk["FECHA"] = pd.to_datetime(chunk["FECHA"], errors="coerce")
     chunk["FECHA NACIMIENTO"] = pd.to_datetime(chunk["FECHA NACIMIENTO"], errors="coerce")
 
-    # edad por año/mes/día para evitar desbordes
-    hoy = pd.Timestamp(date.today())
+    fecha_compra = chunk["FECHA"]
     nac = chunk["FECHA NACIMIENTO"]
-    edad = hoy.year - nac.dt.year
-    cumple_pasado = (nac.dt.month * 100 + nac.dt.day) <= (hoy.month * 100 + hoy.day)
+    edad = fecha_compra.dt.year - nac.dt.year
+    cumple_pasado = (nac.dt.month * 100 + nac.dt.day) <= (fecha_compra.dt.month * 100 + fecha_compra.dt.day)
     edad = edad - (~cumple_pasado).astype("Int64")
     chunk["EDAD"] = edad.astype("Int64")
+    
     return chunk
 
 
@@ -52,74 +57,95 @@ def cargar_datos(path=CSV_PATH):
     )
     chunks = list(lector)
 
-    # procesa bloques en paralelo
     with ProcessPoolExecutor() as executor:
-        procesados = list(executor.map(_procesar_chunk, chunks))
+        procesados = list(executor.map(preparar_datos, chunks))
 
     return pd.concat(procesados, ignore_index=True)
 
 
 class ValidacionError(Exception):
     pass
+    
+def _parsear_entero(valor, nombre_filtro):
+    try:
+        return int(valor)
+    except (ValueError, TypeError):
+        raise ValidacionError(f"El valor '{valor}' no es un número entero válido para {nombre_filtro}")
+
+def _parsear_fecha(valor, nombre_filtro):
+    if str(valor).strip() == "":
+        raise ValidacionError(f"El valor '{valor}' no es una fecha ISO-8601 válida para {nombre_filtro}")
+    
+    try:
+        fecha = pd.to_datetime(valor)
+        if pd.isna(fecha):
+            raise ValueError
+    except (ValueError, TypeError):
+        raise ValidacionError(f"El valor '{valor}' no es una fecha ISO-8601 válida para {nombre_filtro}")
+    
+    if fecha.tzinfo is not None:
+        fecha = fecha.tz_localize(None)
+    
+    return fecha
 
 
-def aplicar_filtros(df, filtros):
+def aplicar_filtros(df: pd.DataFrame, filtros: Dict[str, Any]) -> pd.DataFrame:
     resultado = df
 
     for clave, valor in filtros.items():
         if valor is None:
             continue
 
-        if clave == "GENERO":
-            if valor not in GENERO_TEXTO_A_NUM:
-                raise ValidacionError(f"El valor '{valor}' no es un género válido")
-            resultado = resultado[resultado["GENERO"] == GENERO_TEXTO_A_NUM[valor]]
+        try:
+            if clave == "GENERO":
+                genero_normalizado = " ".join(str(valor).split()).upper()
+                
+                reemplazos_tildes = {"Á": "A", "É": "E", "Í": "I", "Ó": "O", "Ú": "U"}
+                for con_tilde, sin_tilde in reemplazos_tildes.items():
+                    genero_normalizado = genero_normalizado.replace(con_tilde, sin_tilde)
 
-        elif clave == "EDAD":
-            try:
-                edad = int(valor)
-            except (ValueError, TypeError):
-                raise ValidacionError(f"El valor '{valor}' no es un número entero válido para EDAD")
-            resultado = resultado[resultado["EDAD"] == edad]
+                if genero_normalizado not in GENERO_TEXTO_A_NUM:
+                    raise ValidacionError(f"El valor '{valor}' no es un género válido")
+                resultado = resultado[resultado["GENERO"] == GENERO_TEXTO_A_NUM[genero_normalizado]]
 
-        elif clave == "CANAL":
-            if valor not in CANALES_VALIDOS:
-                raise ValidacionError(f"El valor '{valor}' no es un canal válido")
-            resultado = resultado[resultado["CANAL"] == valor]
+            elif clave == "EDAD":
+                edad = _parsear_entero(valor, "EDAD")
+                resultado = resultado[resultado["EDAD"] == edad]
 
-        elif clave == "CODIGO_PRODUCTO":
-            try:
-                sku = int(valor)
-            except (ValueError, TypeError):
-                raise ValidacionError(f"El valor '{valor}' no es un SKU válido")
-            resultado = resultado[resultado["SKU"] == sku]
+            elif clave == "CANAL":
+                canal_normalizado = str(valor).strip().upper()
+                if canal_normalizado not in CANALES_VALIDOS:
+                    raise ValidacionError(f"El valor '{valor}' no es un canal válido")
+                resultado = resultado[resultado["CANAL"] == canal_normalizado]
 
-        elif clave == "ID_PERSONA":
-            resultado = resultado[resultado["CODIGO CLIENTE"] == str(valor)]
+            elif clave == "CODIGO_PRODUCTO":
+                sku = _parsear_entero(valor, "CODIGO_PRODUCTO")
+                resultado = resultado[resultado["SKU"] == sku]
 
-        elif clave == "LOCAL":
-            try:
-                local = int(valor)
-            except (ValueError, TypeError):
-                raise ValidacionError(f"El valor '{valor}' no es un número entero válido para LOCAL")
-            resultado = resultado[resultado["LOCAL"] == local]
+            elif clave == "ID_PERSONA":
+                try:
+                    uuid_normalizado = uuid.UUID(str(valor))
+                except (ValueError, AttributeError, TypeError):
+                    raise ValidacionError(f"El valor '{valor}' no es un ID_PERSONA (UUID) válido")
+                resultado = resultado[resultado["CODIGO CLIENTE"] == str(uuid_normalizado)]
 
-        elif clave == "FECHA_DESDE":
-            try:
-                fecha = pd.to_datetime(valor)
-            except (ValueError, TypeError):
-                raise ValidacionError(f"El valor '{valor}' no es una fecha ISO-8601 válida para FECHA_DESDE")
-            resultado = resultado[resultado["FECHA"] >= fecha]
+            elif clave == "LOCAL":
+                local = _parsear_entero(valor, "LOCAL")
+                resultado = resultado[resultado["LOCAL"] == local]
 
-        elif clave == "FECHA_HASTA":
-            try:
-                fecha = pd.to_datetime(valor)
-            except (ValueError, TypeError):
-                raise ValidacionError(f"El valor '{valor}' no es una fecha ISO-8601 válida para FECHA_HASTA")
-            resultado = resultado[resultado["FECHA"] <= fecha]
+            elif clave == "FECHA_DESDE":
+                fecha = _parsear_fecha(valor, "FECHA_DESDE")
+                resultado = resultado[resultado["FECHA"] >= fecha]
 
-        else:
-            raise ValidacionError(f"La consulta '{clave}' no es un filtro válido")
+            elif clave == "FECHA_HASTA":
+                fecha = _parsear_fecha(valor, "FECHA_HASTA")
+                resultado = resultado[resultado["FECHA"] <= fecha]
+
+            else:
+                raise ValidacionError(f"La consulta '{clave}' no es un filtro válido")
+
+        except ValidacionError:
+            raise
 
     return resultado
 
@@ -127,7 +153,6 @@ def aplicar_filtros(df, filtros):
 N_WORKERS = os.cpu_count() or 4
 
 
-# map: agregados de una partición
 def _reducir_particion(particion):
     return {
         "conteo": int(particion.size),
@@ -138,7 +163,7 @@ def _reducir_particion(particion):
     }
 
 
-def calcular_estadisticas(df):
+def calcular_estadisticas(df: pd.DataFrame, pool_executor: Optional[ProcessPoolExecutor] = None) -> Dict[str, float | int]:
     valores = df["MONTO APLICADO"].dropna().to_numpy(dtype=float)
     conteo = int(valores.size)
 
@@ -149,15 +174,17 @@ def calcular_estadisticas(df):
             "desviacion_estandar": 0.0,
         }
 
-    # paraleliza solo si conviene
     if conteo < 50_000:
         parciales = [_reducir_particion(valores)]
     else:
         particiones = np.array_split(valores, N_WORKERS)
-        with ProcessPoolExecutor(max_workers=N_WORKERS) as executor:
-            parciales = list(executor.map(_reducir_particion, particiones))
+        
+        if pool_executor is not None:
+            parciales = list(pool_executor.map(_reducir_particion, particiones))
+        else:
+            with ProcessPoolExecutor(max_workers=N_WORKERS) as executor:
+                parciales = list(executor.map(_reducir_particion, particiones))
 
-    # combina parciales
     suma = sum(p["suma"] for p in parciales)
     suma_cuadrados = sum(p["suma_cuadrados"] for p in parciales)
     minimo = min(p["minimo"] for p in parciales)
@@ -167,7 +194,6 @@ def calcular_estadisticas(df):
     varianza = max((suma_cuadrados / conteo) - (promedio ** 2), 0.0)
     desviacion = math.sqrt(varianza)
 
-    # mediana necesita orden global
     mediana = float(np.median(valores))
 
     return {

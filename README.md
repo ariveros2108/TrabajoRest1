@@ -1,114 +1,162 @@
+# Cruz Morada — Servicio de Estadísticas de Ventas
 
 Universidad Tecnológica Metropolitana — Computación Paralela y Distribuida.
 Alexander Riveros Avila
 Sebastian Antileo Antileo
 Sebastian inzulza
+API REST que entrega un resumen estadístico (suma, conteo, promedio, mínimo, máximo, mediana y desviación estándar) sobre el histórico de ventas de Cruz Morada, con carga paralela de datos y filtros opcionales por género, edad, canal, producto, cliente, local y rango de fechas.
+
+## Características
+
+- Carga de datos **paralela y desatendida** al iniciar el servidor: el CSV se lee en chunks y cada chunk se preprocesa en un proceso independiente.
+- Cálculo de estadísticas mediante **reducción paralela** (map-reduce): los agregados se calculan por partición y se combinan al final.
+- Filtros opcionales vía **query params (GET)** o **cuerpo JSON (POST)**, con validación estricta.
+- Errores siempre en el formato estandarizado que exige la pauta.
+- Documentación interactiva automática (Swagger / ReDoc).
 
 ## Requisitos
 
-- Python 3.12 (probado en Ubuntu 24.04)
-
-## Instalación
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requisitos.txt
-```
-
-## Obtención de datos
-
-Con el entorno activado, descarga el dataset y lo descomprime como `datos.csv`:
+- Python 3.10 o superior.
+- Dependencias: `fastapi`, `uvicorn`, `pydantic`, `pandas`, `numpy`.
 
 ```bash
-python descargar_datos.py
+pip install fastapi uvicorn pandas numpy
 ```
 
-## Ejecución
+## Preparar los datos
+
+El servicio espera un CSV **separado por `;`** con las columnas del dataset de Cruz Morada (`FECHA`, `CANAL`, `SKU`, `MONTO APLICADO`, `LOCAL`, `CODIGO CLIENTE`, `FECHA NACIMIENTO`, `GENERO`, entre otras).
+
+1. Coloca el archivo como `datos.csv` en la raíz del proyecto, o apunta a otra ruta con una variable de entorno:
+
+   ```bash
+   export CSV_PATH=/ruta/a/tu/archivo.csv
+   ```
+
+   Si cuentas con un script de descarga del dataset real (por ejemplo `descargar_datos.py`), ejecútalo primero para dejar `datos.csv` listo.
+
+2. Si no tienes el CSV real a mano, genera datos de prueba sintéticos:
+
+   ```bash
+   python generar_datos.py 1000   # crea datos.json con 1000 registros de ejemplo
+   ```
+
+Si `datos.csv` no existe o falla la carga, el servidor cae automáticamente a `datos.json` como respaldo. Si tampoco hay `datos.json`, arranca con un dataset vacío en vez de caerse.
+
+## Ejecutar el servidor
 
 ```bash
 uvicorn main:app --reload
 ```
 
-El CSV se carga en memoria al iniciar (unos segundos por el volumen).
+La carga de datos ocurre **una sola vez**, al arrancar el servidor, no en cada consulta.
 
-- API: `http://127.0.0.1:8000/v1/estadisticas/ventas`
-- Swagger: `http://127.0.0.1:8000/docs`
+Con el servidor corriendo:
 
-La ruta del CSV se puede cambiar con la variable `CSV_PATH`:
+- Swagger UI: http://localhost:8000/docs
+- ReDoc: http://localhost:8000/redoc
 
-```bash
-CSV_PATH=/otra/ruta.csv uvicorn main:app
+## Endpoint
+
+```
+GET  /v1/estadisticas/ventas
+POST /v1/estadisticas/ventas
 ```
 
-## Uso
+Ambos devuelven el mismo resumen estadístico sobre `MONTO APLICADO`. Sin filtros, el cálculo es sobre el dataset completo.
 
-GET con filtros opcionales (query params):
+### Filtros soportados
+
+| Filtro | Valores válidos |
+|---|---|
+| `GENERO` | `Femenino`, `Masculino`, `Otro`, `No especificado` (sin distinguir mayúsculas ni tildes) |
+| `EDAD` | Entero. Es la edad del cliente **al momento de la compra**, no su edad actual |
+| `CANAL` | `POS`, `WEB`, `APP`, `CCT`, `APR`, `WPR` |
+| `CODIGO_PRODUCTO` | Entero (SKU del producto) |
+| `ID_PERSONA` | UUID del cliente |
+| `LOCAL` | Entero (número de local) |
+| `FECHA_DESDE` | Fecha ISO-8601 |
+| `FECHA_HASTA` | Fecha ISO-8601 |
+
+Se pueden combinar cualquier cantidad de filtros, o no usar ninguno. Un filtro fuera de esta lista, o un valor que no se pueda interpretar en el tipo esperado, responde con `400`.
+
+### GET — ejemplo
 
 ```bash
-curl "http://127.0.0.1:8000/v1/estadisticas/ventas"
-curl "http://127.0.0.1:8000/v1/estadisticas/ventas?GENERO=Femenino&CANAL=POS"
+curl "http://localhost:8000/v1/estadisticas/ventas?GENERO=Femenino&EDAD=31&CANAL=POS"
 ```
 
-POST con filtros en el body:
+### POST — ejemplo
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/v1/estadisticas/ventas" \
+curl -X POST "http://localhost:8000/v1/estadisticas/ventas" \
   -H "Content-Type: application/json" \
-  -d '{"consultas": [{"consulta": "GENERO", "valor": "Femenino"}]}'
+  -d '{
+    "consultas": [
+      {"consulta": "GENERO", "valor": "Femenino"},
+      {"consulta": "EDAD", "valor": "31"},
+      {"consulta": "CANAL", "valor": "POS"}
+    ]
+  }'
 ```
 
-Respuesta:
+### Respuesta exitosa (200)
 
 ```json
 {
-  "suma": 33012425828.0,
-  "conteo": 3242878,
-  "promedio": 10179.98,
-  "minimo": 15.0,
-  "maximo": 226476.0,
-  "mediana": 7662.0,
-  "desviacion_estandar": 14453.24
+  "suma": 1500.5,
+  "conteo": 42,
+  "promedio": 35.73,
+  "minimo": 10.0,
+  "maximo": 100.0,
+  "mediana": 30.0,
+  "desviacion_estandar": 25.4
 }
 ```
 
-## Filtros
+### Formato de error
 
-GENERO, EDAD, CANAL, CODIGO_PRODUCTO, ID_PERSONA, LOCAL, FECHA_DESDE, FECHA_HASTA.
+Toda respuesta de error (400 o 500) sigue esta misma estructura:
 
-- GENERO: "No especificado", "Masculino", "Femenino", "Otro"
-- CANAL: POS, WEB, APP, CCT, APR, WPR
-- FECHA_DESDE / FECHA_HASTA en formato ISO-8601
+```json
+{
+  "detail": "El valor 'TELEFONO' no es un canal válido",
+  "instance": "/v1/estadisticas/ventas",
+  "status": 400,
+  "title": "Bad Request",
+  "type": "https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/400",
+  "timestamp": "2026-07-18T04:15:23.456789Z",
+  "errorCode": "VF",
+  "errorLabel": "Validación Fallida",
+  "method": "GET"
+}
+```
 
-Las consultas admiten cero, uno o varios filtros combinados.
+Causas de `400`:
+- El arreglo `consultas` viene vacío o nulo (POST).
+- Se envía un filtro que no está en la lista de filtros soportados.
+- El valor de un filtro no se puede convertir al tipo esperado (por ejemplo `EDAD=treinta`, un `ID_PERSONA` que no es un UUID válido, o un `CANAL` fuera de la lista).
 
-## Errores
+Un `500` indica un error interno no controlado durante el procesamiento.
 
-Todas las respuestas de error usan el mismo formato. El 400 (Validación Fallida,
-`errorCode: "VF"`) cubre valores inválidos o no convertibles; el 500 (Error Interno,
-`errorCode: "IE"`) cubre fallos internos.
+## Procesamiento paralelo
+
+- **Carga**: el CSV se lee en chunks de 100.000 filas; cada chunk se preprocesa (parseo de fechas, cálculo de `EDAD`) en un proceso independiente vía `ProcessPoolExecutor`, y luego se concatenan en un único `DataFrame` que queda en memoria para todas las consultas.
+- **Cálculo de estadísticas**: si el resultado filtrado supera 50.000 filas, el arreglo de montos se reparte entre `os.cpu_count()` procesos. Cada uno calcula su propio conteo, suma, suma de cuadrados, mínimo y máximo; esos valores parciales se combinan al final para obtener el resultado global. La mediana se calcula aparte, sobre el arreglo completo, porque no se puede reconstruir correctamente a partir de medianas parciales.
+
+## Estructura del proyecto
+
+| Archivo | Contenido |
+|---|---|
+| `main.py` | Aplicación FastAPI: ciclo de vida (carga de datos), endpoints GET/POST, manejadores de error. |
+| `estadisticas.py` | Carga y preprocesamiento del CSV, aplicación de filtros, cálculo de estadísticas. |
+| `errores.py` | Construcción del cuerpo de error estándar. |
+| `generar_datos.py` | Genera `datos.json`, un set de datos de prueba sintético. |
+| `conftest.py` | Configuración de `pytest`. |
+| `datos.json` | Datos de prueba (salida de `generar_datos.py`). |
 
 ## Pruebas
 
 ```bash
-pytest -v
+pytest
 ```
-
-## Datos de prueba
-
-`generar_datos.py` crea un `datos.json` con registros simulados:
-
-```bash
-python generar_datos.py 1000
-```
-
-## Estructura
-
-```
-main.py               API y endpoints
-estadisticas.py       carga, filtrado y cálculo paralelo
-errores.py            formato de errores 400/500
-generar_datos.py      generador de datos.json
-descargar_datos.py    descarga del dataset
-tests/                pruebas unitarias
-```                pruebas unitarias
