@@ -1,6 +1,8 @@
 
 Universidad Tecnológica Metropolitana — Computación Paralela y Distribuida.
-
+Alexander Riveros Avila
+Sebastian Antileo Antileo
+Sebastian inzulza
 
 ## Requisitos
 
@@ -101,9 +103,12 @@ python generar_datos.py 1000
 ```
 
 ## Estructura
+
+```
 main.py               API y endpoints
 estadisticas.py       carga, filtrado y cálculo paralelo
 errores.py            formato de errores 400/500
 generar_datos.py      generador de datos.json
 descargar_datos.py    descarga del dataset
 tests/                pruebas unitarias
+```                pruebas unitarias
