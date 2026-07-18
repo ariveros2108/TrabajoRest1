@@ -1,7 +1,6 @@
-Servicio REST en Python + FastAPI que procesa un CSV de ventas de gran volumen
-y devuelve un resumen estadístico sobre la columna `MONTO APLICADO`.
 
 Universidad Tecnológica Metropolitana — Computación Paralela y Distribuida.
+
 
 ## Requisitos
 
@@ -108,9 +107,3 @@ errores.py            formato de errores 400/500
 generar_datos.py      generador de datos.json
 descargar_datos.py    descarga del dataset
 tests/                pruebas unitarias
-
-## Notas
-
-El procesamiento usa paralelismo en dos capas: carga del CSV por chunks y cálculo
-estadístico con patrón MapReduce sobre las particiones de los datos. La mediana se
-calcula aparte por requerir orden global.

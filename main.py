@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel
 
+import pandas as pd
+
 import estadisticas
 from estadisticas import (
     cargar_datos,
@@ -22,8 +24,18 @@ datos = {"df": None}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Cargando CSV en memoria...")
-    datos["df"] = cargar_datos(estadisticas.CSV_PATH)
-    print(f"Carga completa: {len(datos['df'])} filas.")
+    try:
+        datos["df"] = cargar_datos(estadisticas.CSV_PATH)
+        print(f"Carga completa: {len(datos['df'])} filas.")
+    except Exception as e:
+        print(f"Error al cargar el CSV: {e}")
+        # respaldo: intenta datos.json, si falla queda vacío
+        try:
+            datos["df"] = pd.read_json("datos.json")
+            print(f"Respaldo cargado: {len(datos['df'])} filas desde datos.json.")
+        except Exception:
+            datos["df"] = pd.DataFrame(columns=["MONTO APLICADO"])
+            print("Sin datos disponibles, se inicia vacío.")
     yield
     datos["df"] = None
 
@@ -82,6 +94,7 @@ def procesar(filtros, method):
 
 @app.get(RUTA_BASE)
 def get_estadisticas(
+    request: Request,
     GENERO: Optional[str] = Query(None),
     EDAD: Optional[str] = Query(None),
     CANAL: Optional[str] = Query(None),
@@ -91,6 +104,15 @@ def get_estadisticas(
     FECHA_DESDE: Optional[str] = Query(None),
     FECHA_HASTA: Optional[str] = Query(None),
 ):
+    # rechaza query params que no sean filtros válidos
+    desconocidos = set(request.query_params.keys()) - FILTROS_VALIDOS
+    if desconocidos:
+        clave = next(iter(desconocidos))
+        return JSONResponse(
+            status_code=400,
+            content=error_400(f"La consulta '{clave}' no es uno de los valores permitidos", "GET"),
+        )
+
     filtros = {
         "GENERO": GENERO, "EDAD": EDAD, "CANAL": CANAL,
         "CODIGO_PRODUCTO": CODIGO_PRODUCTO, "ID_PERSONA": ID_PERSONA,
