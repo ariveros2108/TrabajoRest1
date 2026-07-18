@@ -1,8 +1,8 @@
 # Cruz Morada — Servicio de Estadísticas de Ventas
 
 Universidad Tecnológica Metropolitana — Computación Paralela y Distribuida.
-Alexander Riveros Avila
-Sebastian Antileo Antileo
+Alexander Riveros Avila,
+Sebastian Antileo Antileo y
 Sebastian inzulza
 
 
