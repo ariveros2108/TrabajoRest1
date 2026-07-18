@@ -4,6 +4,8 @@ Universidad Tecnológica Metropolitana — Computación Paralela y Distribuida.
 Alexander Riveros Avila
 Sebastian Antileo Antileo
 Sebastian inzulza
+
+
 API REST que entrega un resumen estadístico (suma, conteo, promedio, mínimo, máximo, mediana y desviación estándar) sobre el histórico de ventas de Cruz Morada, con carga paralela de datos y filtros opcionales por género, edad, canal, producto, cliente, local y rango de fechas.
 
 ## Características
