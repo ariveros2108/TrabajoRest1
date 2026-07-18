@@ -30,14 +30,14 @@ pip install fastapi uvicorn pandas numpy
 El servicio espera un CSV **separado por `;`** con las columnas del dataset de Cruz Morada (`FECHA`, `CANAL`, `SKU`, `MONTO APLICADO`, `LOCAL`, `CODIGO CLIENTE`, `FECHA NACIMIENTO`, `GENERO`, entre otras).
 
 1. Coloca el archivo como `datos.csv` en la raíz del proyecto, o apunta a otra ruta con una variable de entorno:
+(hay un script  de descarga del dataset `descargar_datos.py`, se puede ejecutar primero para dejar `datos.csv` listo).
 
    ```bash
    export CSV_PATH=/ruta/a/tu/archivo.csv
    ```
 
-   Si cuentas con un script de descarga del dataset real (por ejemplo `descargar_datos.py`), ejecútalo primero para dejar `datos.csv` listo.
 
-2. Si no tienes el CSV real a mano, genera datos de prueba sintéticos:
+3. Si no tienes el CSV real a mano, genera datos de prueba sintéticos:
 
    ```bash
    python generar_datos.py 1000   # crea datos.json con 1000 registros de ejemplo
